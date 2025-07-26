@@ -1,0 +1,108 @@
+# File: decision_permutation/interval.py
+import numpy as np
+import math
+from typing import Tuple, List, Callable
+from config import j_feature, method
+from selection import selection_rule_covariate_dependent
+
+def get_smoothed_cutoff_with_N1(scores: List[float], alpha: float, N1: int) -> float:
+    """
+    Compute p-value for a given v_test using randomized smoothing.
+    p(y) = (#{scores > v_test} + U * (#{scores == v_test} + N1)) / (len(scores) + N1)
+    """
+    #我们这里先用理论上最严格的upper quantile来计算cutoff
+    scores_arr = np.array(scores) #scores中有append inf
+    total = len(scores_arr) + N1 #N1中包含observed data的permutation的score
+    v_upper = math.inf
+    #U=np.random.uniform(0,1)
+    for v in np.sort(np.unique(scores_arr))[::-1]:
+        num_gt = np.sum(scores_arr > v)
+        num_eq = np.sum(scores_arr == v)
+        p_val = (num_gt + (num_eq + N1)) / (total)
+        if p_val >= alpha*(1+1/total): #这里加1/total是因为我们append了一个inf
+            return v_upper #返回的是最后一个让pvalue<alpha的v
+        v_upper = v
+    return v_upper
+
+    #方案2: 我自己算的那个cutoff
+    # scores_arr = np.array(scores)
+    # total = len(scores_arr) + N1
+    # U=np.random.uniform(0,1) 
+    # v_upper = math.inf
+    # num_gt_upper = 0
+    # num_eq_upper = 0    
+    # #index_upper = total
+    # v_list = np.sort(np.unique(scores_arr))[::-1]
+    # for idx, v in enumerate(v_list):
+    #     num_gt = np.sum(scores_arr > v)
+    #     num_eq = np.sum(scores_arr == v)
+    #     # k: rank of v in total (from 0 for largest)
+    #     #index_lower = idx
+    #     #f = (total*alpha+index_upper-total-0.5*(N1+1)-N1)/(index_upper-index_lower)
+    #     prob = (alpha*total-0.5*N1-num_gt_upper-0.5*num_eq_upper)/(num_gt+0.5*num_eq-num_gt_upper-0.5*num_eq_upper)
+    #     p_val = (num_gt + U * (num_eq + N1)) / (total)
+    #     if p_val >= alpha:
+    #         if U < prob:
+    #             return v
+    #         else:
+    #             return v_upper
+    #     v_upper = v
+    #     #index_upper = idx
+    #     num_gt_upper = num_gt
+    #     num_eq_upper = num_eq
+    # return math.inf
+
+def construct_prediction_interval(
+    t: int,
+    X_on: np.ndarray,
+    Y_on: np.ndarray,
+    mu_on: np.ndarray,
+    M: int,
+    alpha: float,
+) -> Tuple[float, float]:
+    """
+    Build symmetric prediction interval at time t.
+    This function works with selection_rule of form (X_j_val, cum_selected) -> bool
+    or (mu_t, mu_history) -> bool, depending on the rule logic.
+    """
+    if t == 0:
+        return -math.inf, math.inf, 0
+    i = t
+    indices = list(range(i + 1))
+    base_perm = tuple(indices) #base_perm是observed data的permutation
+
+    perms_list = [base_perm]
+    max_perms = min(M + 1, math.factorial(i + 1))
+    #perms_list是所有最开始random permutation的list
+    while len(perms_list) < max_perms:
+        pi = tuple(np.random.permutation(indices))
+        if pi not in perms_list:
+            perms_list.append(pi)
+
+    perms_selected = []
+    for pi in perms_list:
+        mu_hist = mu_on[list(pi)][:i]  
+        mu_test = mu_on[list(pi)][i]
+        if selection_rule_covariate_dependent(mu_test, mu_hist,method=method):
+            perms_selected.append(pi)
+    cal_size = len(perms_selected)
+
+    N1 = 0
+    scores: List[float] = []
+    for pi in perms_selected:
+        if pi[i] == i:
+            N1 += 1 #N1是我们不知道具体score但知道这个permutation的score是等于observed data的score的
+        else:
+            k = pi[i]
+            scores.append(abs(Y_on[k] - mu_on[k])) #最后一个点的residual作为score
+
+    if not scores:
+        return -math.inf, math.inf, 0
+    scores.append(math.inf) #scores中append inf
+
+    v_cut = get_smoothed_cutoff_with_N1(scores, alpha, N1)
+    return mu_on[t] - v_cut, mu_on[t] + v_cut, cal_size
+
+
+
+
