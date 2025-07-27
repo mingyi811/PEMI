@@ -38,9 +38,9 @@ def run_randomized_quantile_interval_experiment(
     return t_records, selected
 
 def main():
-    n_runs = 1000
+    n_runs = 10
     summary = []
-    n_online_list = [200]#[1, 2, 3, 4, 5, 10, 20, 30, 40, 50, 75,100,125,150,175,200]
+    n_online_list = [100]#[1, 2, 3, 4, 5, 10, 20, 30, 40, 50, 75,100,125,150,175,200]
     for n_online in n_online_list:
         all_t_records = []  # 存储所有 simulation 的 (t, is_covered, length, is_inf, cal_size)
         selected_counts = []
@@ -110,9 +110,14 @@ def main():
             t_inf_list[t].append(is_inf)
             t_cal_list[t].append(cal_size)
 
-        count = len(t_cov_list) #数一下每个t被select的数量
+    for t in t_vals:
+        cov_arr = np.array(t_cov_list[t])
+        len_arr = np.array(t_len_list[t])
+        inf_arr = np.array(t_inf_list[t])
+        cal_arr = np.array(t_cal_list[t])
+        count = len(cov_arr) #数一下每个t被select的数量
         with np.errstate(invalid='ignore'): #忽略inf的warning
-            print(f"{t:4d} | {count:6d} | {np.nanmean(t_cov_list[t]):7.3f} | {np.nanstd(t_cov_list[t]):7.3f} | {np.nanmedian(t_len_list[t]):7.3f} | {np.nanstd(t_len_list[t]):7.3f} | {np.nanmean(t_inf_list[t]):11.3f} | {np.nanstd(t_inf_list[t]):11.3f} | {np.nanmean(t_cal_list[t]):8.3f} | {np.nanstd(t_cal_list[t]):8.3f}")
+            print(f"{t:4d} | {count:6d} | {np.nanmean(cov_arr):7.3f} | {np.nanstd(cov_arr):7.3f} | {np.nanmedian(len_arr):7.3f} | {np.nanstd(len_arr):7.3f} | {np.nanmean(inf_arr):11.3f} | {np.nanstd(inf_arr):11.3f} | {np.nanmean(cal_arr):8.3f} | {np.nanstd(cal_arr):8.3f}")
 
     # 绘制 selection conditional coverage/length/inf/cal_size 曲线在同一张图的四个子图中
     fig, axes = plt.subplots(2, 2, figsize=(15, 8))
