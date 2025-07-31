@@ -5,24 +5,40 @@ from typing import Tuple, List, Callable
 from config import j_feature, method
 from selection import selection_rule_covariate_dependent
 
-def get_smoothed_cutoff_with_N1(scores: List[float], alpha: float, N1: int) -> float:
+def get_smoothed_cutoff_with_N1(scores: List[float], alpha: float, N1: int, quantile_method: str) -> float:
     """
     Compute p-value for a given v_test using randomized smoothing.
     p(y) = (#{scores > v_test} + U * (#{scores == v_test} + N1)) / (len(scores) + N1)
     """
-    #我们这里先用理论上最严格的upper quantile来计算cutoff
-    scores_arr = np.array(scores) #scores中有append inf
-    total = len(scores_arr) + N1 #N1中包含observed data的permutation的score
-    v_upper = math.inf
-    #U=np.random.uniform(0,1)
-    for v in np.sort(np.unique(scores_arr))[::-1]:
-        num_gt = np.sum(scores_arr > v)
-        num_eq = np.sum(scores_arr == v)
-        p_val = (num_gt + (num_eq + N1)) / (total)
-        if p_val >= alpha*(1+1/total): #这里加1/total是因为我们append了一个inf
-            return v_upper #返回的是最后一个让pvalue<alpha的v
-        v_upper = v
-    return v_upper
+    if quantile_method == "upper":
+        scores_arr = np.array(scores) #scores中有append inf
+        total = len(scores_arr) + N1 #N1中包含observed data的permutation的score
+        v_upper = math.inf
+        for v in np.sort(np.unique(scores_arr))[::-1]:
+            num_gt = np.sum(scores_arr > v)
+            num_eq = np.sum(scores_arr == v)
+            p_val = (num_gt + (num_eq + N1)) / (total)
+            if p_val >= alpha*(1+1/total): #这里加1/total是因为我们append了一个inf  
+                return v_upper #返回的是最后一个让pvalue<alpha的v
+            v_upper = v
+        return v_upper
+
+    #方案2: randomize的cutoff(valid但比方案一好一点)
+    elif quantile_method == "randomize":
+        scores_arr = np.array(scores)
+        total = len(scores_arr) + N1
+        U=np.random.uniform(0,1)
+        v_upper = math.inf
+        for v in np.sort(np.unique(scores_arr))[::-1]:
+            num_gt = np.sum(scores_arr > v)
+            num_eq = np.sum(scores_arr == v)
+            p_val = (num_gt + U * (num_eq + N1)) / (total)
+            if p_val >= alpha:
+                return v_upper
+            v_upper = v
+        return v_upper
+    else:
+        raise ValueError(f"Unknown method: {quantile_method!r}")
 
     #方案2: 我自己算的那个cutoff
     # scores_arr = np.array(scores)
@@ -59,6 +75,7 @@ def construct_prediction_interval(
     mu_on: np.ndarray,
     M: int,
     alpha: float,
+    quantile_method: str = "upper"
 ) -> Tuple[float, float]:
     """
     Build symmetric prediction interval at time t.
@@ -74,10 +91,33 @@ def construct_prediction_interval(
     perms_list = [base_perm]
     max_perms = min(M + 1, math.factorial(i + 1))
     #perms_list是所有最开始random permutation的list
+
+    #方案1:直接用最简单的random permutation
     while len(perms_list) < max_perms:
         pi = tuple(np.random.permutation(indices))
         if pi not in perms_list:
             perms_list.append(pi)
+
+    #方案2:我们试试分层抽样
+    # perms_per_last = max_perms // (t + 1)  # 每个最后一个位置值的排列数
+    # extra_perms = max_perms % (t + 1)  # 余数，分配到前 extra_perms 个层
+
+    # for last_val in range(t + 1):
+    #     # 确定该层的排列数
+    #     n_perms = perms_per_last + (1 if last_val < extra_perms else 0)
+        
+    #     # 如果 last_val 是 base_perm 的最后一个值，base_perm 已包含，减少一次
+    #     if last_val == base_perm[-1] and n_perms > 0:
+    #         n_perms -= 1
+        
+    #     # 生成排列
+    #     remaining_indices = [x for x in range(t + 1) if x != last_val]  # 除去 last_val 的索引
+    #     for _ in range(n_perms):
+    #         # 对剩余 t 个位置随机排列
+    #         perm = list(np.random.permutation(remaining_indices))
+    #         # 添加最后一个位置
+    #         perm.append(last_val)
+    #         perms_list.append(tuple(perm))
 
     perms_selected = []
     for pi in perms_list:
@@ -100,7 +140,7 @@ def construct_prediction_interval(
         return -math.inf, math.inf, 0
     scores.append(math.inf) #scores中append inf
 
-    v_cut = get_smoothed_cutoff_with_N1(scores, alpha, N1)
+    v_cut = get_smoothed_cutoff_with_N1(scores, alpha, N1, quantile_method=quantile_method)
     return mu_on[t] - v_cut, mu_on[t] + v_cut, cal_size
 
 

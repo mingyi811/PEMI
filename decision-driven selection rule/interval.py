@@ -2,41 +2,45 @@
 import numpy as np
 import math
 from typing import Tuple, List, Callable
-from config import j_feature
+from config import j_feature#, quantile_method
 from selection import selection_rule
 
 
-def get_smoothed_cutoff_with_N1(scores: List[float], alpha: float, N1: int) -> float:
+def get_smoothed_cutoff_with_N1(scores: List[float], alpha: float, N1: int, method: str) -> float:
     """
     Compute p-value for a given v_test using randomized smoothing.
     p(y) = (#{scores > v_test} + U * (#{scores == v_test} + N1)) / (len(scores) + N1)
     """
     #方案1: upper quantile的cutoff(理论上最严格，valid但会很大)
-    scores_arr = np.array(scores) #scores中有append inf
-    total = len(scores_arr) + N1 #N1中包含observed data的permutation的score
-    v_upper = math.inf
-    for v in np.sort(np.unique(scores_arr))[::-1]:
-        num_gt = np.sum(scores_arr > v)
-        num_eq = np.sum(scores_arr == v)
-        p_val = (num_gt + (num_eq + N1)) / (total)
-        if p_val >= alpha*(1+1/total): #这里加1/total是因为我们append了一个inf  
-            return v_upper #返回的是最后一个让pvalue<alpha的v
-        v_upper = v
-    return v_upper
+    if method == "upper":
+        scores_arr = np.array(scores) #scores中有append inf
+        total = len(scores_arr) + N1 #N1中包含observed data的permutation的score
+        v_upper = math.inf
+        for v in np.sort(np.unique(scores_arr))[::-1]:
+            num_gt = np.sum(scores_arr > v)
+            num_eq = np.sum(scores_arr == v)
+            p_val = (num_gt + (num_eq + N1)) / (total)
+            if p_val >= alpha*(1+1/total): #这里加1/total是因为我们append了一个inf  
+                return v_upper #返回的是最后一个让pvalue<alpha的v
+            v_upper = v
+        return v_upper
 
     #方案2: randomize的cutoff(valid但比方案一好一点)
-    # scores_arr = np.array(scores)
-    # total = len(scores_arr) + N1
-    # U=np.random.uniform(0,1)
-    # v_upper = math.inf
-    # for v in np.sort(np.unique(scores_arr))[::-1]:
-    #     num_gt = np.sum(scores_arr > v)
-    #     num_eq = np.sum(scores_arr == v)
-    #     p_val = (num_gt + U * (num_eq + N1)) / (total)
-    #     if p_val >= alpha:
-    #         return v_upper
-    #     v_upper = v
-    # return v_upper
+    elif method == "randomize":
+        scores_arr = np.array(scores)
+        total = len(scores_arr) + N1
+        U=np.random.uniform(0,1)
+        v_upper = math.inf
+        for v in np.sort(np.unique(scores_arr))[::-1]:
+            num_gt = np.sum(scores_arr > v)
+            num_eq = np.sum(scores_arr == v)
+            p_val = (num_gt + U * (num_eq + N1)) / (total)
+            if p_val >= alpha:
+                return v_upper
+            v_upper = v
+        return v_upper
+    else:
+        raise ValueError(f"Unknown method: {method!r}")
 
     #方案3: 自己计算的expectation=1-alpha的cutoff(算出来的expectation等于1-alpha，但实际做出来会有波动)
     # scores_arr = np.array(scores)
@@ -90,7 +94,8 @@ def construct_prediction_interval(
     Y_on: np.ndarray,
     mu_on: np.ndarray,
     M: int,
-    alpha: float
+    alpha: float,
+    quantile_method: str = "upper"
 ) -> Tuple[float, float, int]:
     """
     Build prediction interval at time t via randomized permutations.
@@ -136,5 +141,5 @@ def construct_prediction_interval(
     scores.append(float(np.inf)) #scores中append inf
 
     #U=np.random.uniform(0,1)
-    v_cut = get_smoothed_cutoff_with_N1(scores, alpha, N1)
+    v_cut = get_smoothed_cutoff_with_N1(scores, alpha, N1, quantile_method)
     return mu_on[t] - v_cut, mu_on[t] + v_cut, cal_size

@@ -9,4 +9,4 @@ method: str = "weighted_average"
 # Feature index to inspect
 j_feature: int = 0
 # Number of permutations for randomized testing
-M: int = 1000
+M: int = 2000

@@ -9,6 +9,7 @@ tau1: float = 1.0
 j_feature: int = 0
 # Number of permutations for randomized testing
 M: int = 1000
+#quantile_method: str = "upper"
 
 # Default keys
 # selection_rule_key: str = "symmetric"
