@@ -3,7 +3,7 @@ import numpy as np
 import math
 from typing import Tuple, List, Callable
 from config import j_feature, method
-from selection import selection_rule_covariate_dependent
+from selection import selection_rule_conformal_p_value
 
 def get_smoothed_cutoff_with_N1(scores: List[float], alpha: float, N1: int, quantile_method: str) -> float:
     """
@@ -73,17 +73,19 @@ def construct_prediction_interval(
     X_on: np.ndarray,
     Y_on: np.ndarray,
     mu_on: np.ndarray,
+    c_on: np.ndarray,
+    w_i: np.ndarray,
     M: int,
     alpha: float,
     quantile_method: str = "upper"
-) -> Tuple[float, float, int]:
+) -> Tuple[float, float, float, float, int]:
     """
     Build symmetric prediction interval at time t.
     This function works with selection_rule of form (X_j_val, cum_selected) -> bool
     or (mu_t, mu_history) -> bool, depending on the rule logic.
     """
     if t == 0:
-        return -math.inf, math.inf, 0
+        return -math.inf, math.inf, -math.inf, math.inf, 0
     i = t
     indices = list(range(i + 1))
     base_perm = tuple(indices) #base_perm是observed data的permutation
@@ -97,6 +99,8 @@ def construct_prediction_interval(
         pi = tuple(np.random.permutation(indices))
         if pi not in perms_list:
             perms_list.append(pi)
+    
+
 
     #方案2:我们试试分层抽样
     # perms_per_last = max_perms // (t + 1)  # 每个最后一个位置值的排列数
@@ -119,29 +123,76 @@ def construct_prediction_interval(
     #         perm.append(last_val)
     #         perms_list.append(tuple(perm))
 
-    perms_selected = []
-    for pi in perms_list:
-        mu_hist = mu_on[list(pi)][:i]  
-        mu_test = mu_on[list(pi)][i]
-        if selection_rule_covariate_dependent(mu_test, mu_hist,method=method):
-            perms_selected.append(pi)
-    cal_size = len(perms_selected)
+    #initialize w_i
+    #w_i = np.random.uniform(0,1,len(mu_on))
+    
+    #对于y_t的大小分类讨论，分别讨论y_t>c_t和y_t<c_t的情况
+    perms_selected_k_0 = []
+    perms_selected_k_1 = []
+    #suppose y_t>c_t
+    for k in [0,1]:
+        if k==0:
+            for pi in perms_list:
+                #对于y_t>c_t的情况，k=0
+                y_index=pi.index(t)
+                if selection_rule_conformal_p_value(w_i, c_on, X_on, Y_on, mu_on, pi, y_index, k, method=method):
+                    perms_selected_k_0.append(pi)
+        else:
+            for pi in perms_list:
+                #对于y_t<c_t的情况，k=1
+                y_index=pi.index(t)
+                if selection_rule_conformal_p_value(w_i, c_on, X_on, Y_on, mu_on, pi, y_index, k, method=method):
+                    perms_selected_k_1.append(pi)
+    cal_size = (len(perms_selected_k_0) + len(perms_selected_k_1))/2
+
+
 
     N1 = 0
-    scores: List[float] = []
-    for pi in perms_selected:
+    scores_k_0 = []
+    scores_k_1 = []
+    for pi in perms_selected_k_0:
         if pi[i] == i:
             N1 += 1 #N1是我们不知道具体score但知道这个permutation的score是等于observed data的score的
         else:
             k = pi[i]
-            scores.append(abs(Y_on[k] - mu_on[k])) #最后一个点的residual作为score
+            scores_k_0.append(abs(Y_on[k] - mu_on[k])) #最后一个点的residual作为score
+    for pi in perms_selected_k_1:
+        if pi[i] == i:
+            N1 += 1 #N1是我们不知道具体score但知道这个permutation的score是等于observed data的score的
+        else:
+            k = pi[i]
+            scores_k_1.append(abs(Y_on[k] - mu_on[k])) #最后一个点的residual作为score
 
-    if not scores:
-        return -math.inf, math.inf, 0
-    scores.append(math.inf) #scores中append inf
+    if not scores_k_0:
+        return -math.inf, math.inf, -math.inf, math.inf, 0
+    scores_k_0.append(math.inf) #scores中append inf
+    if not scores_k_1:
+        return -math.inf, math.inf, -math.inf, math.inf, 0
+    scores_k_1.append(math.inf) #scores中append inf
 
-    v_cut = get_smoothed_cutoff_with_N1(scores, alpha, N1, quantile_method=quantile_method)
-    return mu_on[t] - v_cut, mu_on[t] + v_cut, cal_size
+    v_cut_k_0 = get_smoothed_cutoff_with_N1(scores_k_0, alpha, N1, quantile_method=quantile_method)
+    v_cut_k_1 = get_smoothed_cutoff_with_N1(scores_k_1, alpha, N1, quantile_method=quantile_method)
+
+    if mu_on[t]-v_cut_k_1>c_on[t]:
+        bound_1=0
+        bound_2=0
+    else:
+        bound_1=mu_on[t]-v_cut_k_1
+        if mu_on[t]+v_cut_k_1<c_on[t]:
+            bound_2=mu_on[t]+v_cut_k_1
+        else:
+            bound_2=c_on[t]
+    if mu_on[t]+v_cut_k_0<c_on[t]:
+        bound_3=0
+        bound_4=0
+    else:
+        bound_4=mu_on[t]+v_cut_k_0
+        if mu_on[t]-v_cut_k_0>c_on[t]:
+            bound_3=mu_on[t]-v_cut_k_0
+        else:
+            bound_3=c_on[t]
+
+    return bound_1, bound_2, bound_3, bound_4, cal_size
 
 
 
