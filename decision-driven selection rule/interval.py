@@ -88,11 +88,71 @@ def get_smoothed_cutoff_with_N1(scores: List[float], alpha: float, N1: int, meth
     # return math.inf
 
 
+# def construct_prediction_interval(
+#     t: int,
+#     X_on: np.ndarray,
+#     Y_on: np.ndarray,
+#     mu_on: np.ndarray,
+#     M: int,
+#     alpha: float,
+#     quantile_method: str = "upper"
+# ) -> Tuple[float, float, int]:
+#     """
+#     Build prediction interval at time t via randomized permutations.
+#     """
+#     if t == 0:
+#         return -math.inf, math.inf, 0
+#     i = t
+#     indices = list(range(i + 1))
+#     base_perm = tuple(indices) #base_perm是observed data的permutation
+
+#     perms_list = [base_perm]
+#     max_perms = min(M + 1, math.factorial(i + 1))
+#     #perms_list是所有最开始random permutation的list
+#     while len(perms_list) < max_perms:
+#         pi = tuple(np.random.permutation(indices))
+#         if pi not in perms_list:
+#             perms_list.append(pi)
+
+#     perms_selected = []
+#     X_slice = X_on[: i + 1] #X_slice是observed data的X
+#     for pi in perms_list:
+#         cum = 0
+#         for k in range(i):
+#             if selection_rule(X_slice[pi[k], j_feature], cum):
+#                 cum += 1
+#         if selection_rule(X_slice[pi[i], j_feature], cum):
+#             perms_selected.append(pi)
+#     cal_size = len(perms_selected)
+
+#     # Separate observed vs. visible residuals
+#     N1 = 0
+#     scores: List[float] = []
+#     for pi in perms_selected:
+#         if pi[i] == i:
+#             N1 += 1 #N1是我们不知道具体score但知道这个permutation的score是等于observed data的score的
+#         else:
+#             k = pi[i]
+#             scores.append(float(np.abs(Y_on[k] - mu_on[k]))) #最后一个点的residual作为score
+
+#     if not scores:
+#         return -math.inf, math.inf, 0
+
+#     scores.append(float(np.inf)) #scores中append inf
+
+#     #U=np.random.uniform(0,1)
+#     v_cut = get_smoothed_cutoff_with_N1(scores, alpha, N1, quantile_method)
+#     return mu_on[t] - v_cut, mu_on[t] + v_cut, cal_size
+
+
 def construct_prediction_interval(
     t: int,
     X_on: np.ndarray,
     Y_on: np.ndarray,
     mu_on: np.ndarray,
+    X_off: np.ndarray,
+    Y_off: np.ndarray,
+    mu_off: np.ndarray,
     M: int,
     alpha: float,
     quantile_method: str = "upper"
@@ -100,28 +160,32 @@ def construct_prediction_interval(
     """
     Build prediction interval at time t via randomized permutations.
     """
-    if t == 0:
+    n_off = len(X_off)
+    X_aug = np.concatenate((X_off,X_on))
+    mu_aug = np.concatenate((mu_off,mu_on))
+    Y_aug = np.concatenate((Y_off,Y_on))
+    if t+n_off == 0:
         return -math.inf, math.inf, 0
     i = t
-    indices = list(range(i + 1))
-    base_perm = tuple(indices) #base_perm是observed data的permutation
+    indices_aug = list(range(i + n_off + 1))
+    base_perm_aug = tuple(indices_aug) #base_perm是observed data的permutation
 
-    perms_list = [base_perm]
-    max_perms = min(M + 1, math.factorial(i + 1))
+    perms_list_aug = [base_perm_aug]
+    max_perms_aug = min(M + 1, math.factorial(i + 1 + n_off))
     #perms_list是所有最开始random permutation的list
-    while len(perms_list) < max_perms:
-        pi = tuple(np.random.permutation(indices))
-        if pi not in perms_list:
-            perms_list.append(pi)
+    while len(perms_list_aug) < max_perms_aug:
+        pi = tuple(np.random.permutation(indices_aug))
+        if pi not in perms_list_aug:
+            perms_list_aug.append(pi)
 
     perms_selected = []
-    X_slice = X_on[: i + 1] #X_slice是observed data的X
-    for pi in perms_list:
+    X_slice = X_aug[: i + n_off + 1] #X_slice是observed data的X
+    for pi in perms_list_aug:
         cum = 0
         for k in range(i):
-            if selection_rule(X_slice[pi[k], j_feature], cum):
+            if selection_rule(X_slice[pi[k+n_off], j_feature], cum):
                 cum += 1
-        if selection_rule(X_slice[pi[i], j_feature], cum):
+        if selection_rule(X_slice[pi[i+n_off], j_feature], cum):
             perms_selected.append(pi)
     cal_size = len(perms_selected)
 
@@ -129,11 +193,11 @@ def construct_prediction_interval(
     N1 = 0
     scores: List[float] = []
     for pi in perms_selected:
-        if pi[i] == i:
+        if pi[i+n_off] == i+n_off:
             N1 += 1 #N1是我们不知道具体score但知道这个permutation的score是等于observed data的score的
         else:
-            k = pi[i]
-            scores.append(float(np.abs(Y_on[k] - mu_on[k]))) #最后一个点的residual作为score
+            k = pi[i+n_off]
+            scores.append(float(np.abs(Y_aug[k] - mu_aug[k]))) #最后一个点的residual作为score
 
     if not scores:
         return -math.inf, math.inf, 0

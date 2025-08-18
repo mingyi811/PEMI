@@ -26,5 +26,8 @@ def generate_data(n: int, seed: int):
     sigma = np.sqrt(X[:, 0] / 2)
     Y = mu + rng_y.normal(0, sigma, size=n)
     c = np.ones_like(mu)  # 创建与 mu 相同形状的全 1 数组   
-    w = rng_w.uniform(0,1,n)
+    #对于fixed threshold，我们设置w_i=0.99^{n+1-i}
+    #w = np.power(0.99, n+1-np.arange(n))
+    #对于adaptive threshold，我们设置w=1
+    w = np.ones(n)
     return X, Y, mu, c, w

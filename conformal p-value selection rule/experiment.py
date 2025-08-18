@@ -27,7 +27,7 @@ def run_randomized_quantile_interval_experiment(
     for t in range(n_online):
         #w_i = np.ones(t + 1)
         indices = list(range(t + 1))
-        base_perm = tuple(indices) #base_perm是observed data的permutation
+        base_perm = tuple(indices) #base_perm是observed data的permutation``
         sel = selection_rule_conformal_p_value(w_i[:t+1], c_on[:t+1], X_on[:t+1], Y_on[:t+1], mu_on[:t+1], base_perm, t, 1, method=method)
         if not sel:
             continue
