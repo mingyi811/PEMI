@@ -1,4 +1,3 @@
-# ===== 建议放在文件最顶部，并在 import numpy 之前（防止线程竞争）=====
 import os
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -12,7 +11,7 @@ from typing import Tuple, List
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import csv
 
-from config import M, alpha, method
+from config import M, alpha, method, reference_set_method
 from data import generate_data
 from selection import selection_rule_conformal_p_value
 from interval import construct_prediction_interval
@@ -30,31 +29,37 @@ def run_randomized_quantile_interval_experiment(
     M: int = M,
     alpha: float = alpha,
     quantile_method: str = "upper",
-    seed: int = 0
+    seed: int = 0,
+    reference_set_method: str = "ours"
 ) -> Tuple[List[Tuple[int, bool, float, bool, float]], int]:
     """
-    返回：
+    Returns:
       - t_records: List[(t, iscov, length, is_inf, cal_size)]
-      - selected: 该 run 被选中的 t 的个数
+      - selected: number of selected t in this run
     """
-    X_on, Y_on, mu_on, c_on, w_i_on = generate_data(n_online, seed)
-    X_off, Y_off, mu_off, c_off, w_i_off = generate_data(n_offline, seed)
+    np.random.seed(seed + 2)
+    random.seed(seed + 2)
+    rng_u = np.random.default_rng(seed + 2)
+    Y_all, mu_all, c_all, w_i_all = generate_data(n_online+n_offline, seed)
+    Y_on = Y_all[:n_online]
+    mu_on = mu_all[:n_online]
+    Y_off = Y_all[n_online:]
+    mu_off = mu_all[n_online:]
+    c_on = c_all[:n_online]
+    w_i_on = w_i_all[:n_online]
+    c_off = c_all[n_online:]
+    w_i_off = w_i_all[n_online:]
     t_records = []  # (t, is_covered, length, is_inf, cal_size)
     selected = 0
     for t in range(n_online):
         indices = list(range(t + 1))
         base_perm = tuple(indices)
-        sel = selection_rule_conformal_p_value(
-            w_i_on[:t+1], c_on[:t+1], X_on[:t+1], Y_on[:t+1], mu_on[:t+1],
-            base_perm, t, 1, method=method
-        )
+        u=rng_u.uniform(0,1)
+        sel = selection_rule_conformal_p_value(w_i_on[:t+1], c_on[:t+1], Y_on[:t+1], mu_on[:t+1], Y_off, mu_off, c_off, w_i_off, base_perm, t, 1, u, method=method)
         if not sel:
             continue
         selected += 1
-        interval = construct_prediction_interval(
-            t, X_on, Y_on, mu_on, X_off, Y_off, mu_off,
-            c_on, w_i_on, c_off, w_i_off, M, alpha, quantile_method=quantile_method
-        )
+        interval = construct_prediction_interval(t, Y_on, mu_on, Y_off, mu_off, c_on, w_i_on, c_off, w_i_off, M, alpha, u, quantile_method=quantile_method, reference_set_method=reference_set_method)
         iscov = is_covered(Y_on[t], interval[:4])
         bound_1, bound_2, bound_3, bound_4 = interval[:4]
         length = (bound_2 - bound_1) + (bound_4 - bound_3)
@@ -64,13 +69,13 @@ def run_randomized_quantile_interval_experiment(
     return t_records, selected
 
 
-# ---------------- 并行 worker：跑单个 seed 的一次实验 ----------------
-def _worker_one_run(run_id: int, n_online: int, n_offline: int, quantile_method: str, base_seed: int):
+# Parallel worker: run single experiment for one seed
+def _worker_one_run(run_id: int, n_online: int, n_offline: int, quantile_method: str, base_seed: int, reference_set_method: str):
     """
-    返回 (run_id, selected, t_records)
+    Returns (run_id, selected, t_records)
     t_records: List[(t, iscov, length, is_inf, cal_size)]
     """
-    # 与原代码一致的 RNG 设定（可复现）
+    # Reproducible RNG setup (consistent with original code)
     np.random.seed(base_seed + 2)
     random.seed(base_seed + 2)
 
@@ -78,7 +83,8 @@ def _worker_one_run(run_id: int, n_online: int, n_offline: int, quantile_method:
         n_offline=n_offline,
         n_online=n_online,
         quantile_method=quantile_method,
-        seed=base_seed
+        seed=base_seed,
+        reference_set_method=reference_set_method
     )
     return run_id, selected, t_records
 
@@ -86,23 +92,23 @@ def _worker_one_run(run_id: int, n_online: int, n_offline: int, quantile_method:
 def main():
     import datetime
 
-    # 要测试的不同行数列表
-    n_online_list = [50]  # 与原版一致
+    # List of n_online values to test
+    n_online_list = [50]
     n_offline = 50
-    # Monte Carlo 次数
-    n_runs = 100
+    # Number of runs
+    n_runs = 100000
 
-    # 时间戳与目录
+    # Timestamp and directory
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     results_dir = os.path.join(script_dir, "experiment_results")
     os.makedirs(results_dir, exist_ok=True)
 
-    # 结果文件：一个 CSV + 一个 TXT（保留原有的 txt 摘要）
+    # Result files: CSV and TXT (keep original txt summary)
     csv_path = os.path.join(results_dir, f"records_{timestamp}.csv")
     txt_path = os.path.join(results_dir, f"results_{timestamp}.txt")
 
-    # 先写入实验参数到 txt
+    # Write experiment parameters to txt
     with open(txt_path, 'w') as f:
         f.write(f"Experiment Results - {timestamp}\n")
         f.write("="*50 + "\n")
@@ -113,7 +119,7 @@ def main():
         f.write(f"M: {M}\n")
         f.write("="*50 + "\n\n")
 
-    # 初始化 CSV
+    # Initialize CSV
     with open(csv_path, "w", newline="") as fcsv:
         writer = csv.writer(fcsv)
         writer.writerow([
@@ -122,29 +128,29 @@ def main():
             "selected_total"
         ])
 
-    # ------------------ 并行跑所有实验，边收集边写 CSV ------------------
-    # 经验：M2 可以先用 6 进程试试（防止 BLAS 线程 + 进程过多）
+    # Run all experiments in parallel, write to CSV as results come in
     max_workers = min(6, os.cpu_count() or 4)
 
     for quantile_method in ["upper", "randomize"]:
         print(f"\nRunning experiments for {quantile_method} quantile method...")
 
         for n_online in n_online_list:
-            # 提交所有 run 的任务
+            # Submit all run tasks
             futures = []
             with ProcessPoolExecutor(max_workers=max_workers) as ex:
                 for run_id in range(n_runs):
-                    # base_seed = run_id（与你原来一致，内部会用 seed+2 做 RNG）
+                    # base_seed = run_id (consistent with original, internally uses seed+2 for RNG)
                     futures.append(ex.submit(
                         _worker_one_run,
                         run_id=run_id,
                         n_online=n_online,
                         n_offline=n_offline,
                         quantile_method=quantile_method,
-                        base_seed=run_id
+                        base_seed=run_id,
+                        reference_set_method=reference_set_method
                     ))
 
-                # 等待完成并把行写入 CSV
+                # Wait for completion and write rows to CSV
                 with open(csv_path, "a", newline="") as fcsv:
                     writer = csv.writer(fcsv)
                     #for fut in as_completed(futures):
@@ -152,7 +158,7 @@ def main():
  
                         run_id, selected, t_records = fut.result()
                         if len(t_records) == 0:
-                            # 没有被选中的 t，也写一行占位（方便后续统计 selected）
+                            # Placeholder row for runs with no selected t (for selected statistics)
                             writer.writerow([
                                 quantile_method, n_online, run_id, -1,
                                 "", "", "", "",
@@ -169,13 +175,13 @@ def main():
 
     print(f"\nRaw per-t records saved to CSV: {csv_path}")
 
-    # ------------------ 从 CSV 读回并复用你原有的统计/画图逻辑 ------------------
-    # 为了尽量“逻辑一致”，这里严格按你原先的流程再做一遍聚合与绘图
+    # Read CSV and reuse original statistics and plotting logic
+    # Strictly follow original process for aggregation and plotting to maintain consistency
 
     import pandas as pd
     df = pd.read_csv(csv_path)
 
-    # 只保留当前的 n_online（你原来只画第一个 n_online 的详细 t 表）
+    # Keep only current n_online (original code only plots detailed t table for first n_online)
     n_online = n_online_list[0]
 
     summary_upper = []
@@ -183,10 +189,10 @@ def main():
     all_t_records_upper = []
     all_t_records_randomize = []
 
-    # 两种方法分别聚合（与原代码一致的 4 个指标）
+    # Aggregate by method (consistent with original code's 4 metrics)
     for quantile_method in ["upper", "randomize"]:
         df_m = df[(df["method"] == quantile_method) & (df["n_online"] == n_online)]
-        # selected_counts：按 run_id 取 selected_total 的首个值
+        # Get selected_total first value by run_id
         sel_by_run = (
             df_m[["run_id", "selected_total"]]
             .drop_duplicates(subset=["run_id"])
@@ -195,10 +201,10 @@ def main():
         )
         selected_counts = sel_by_run.to_list()
 
-        # 过滤掉 t<0 的占位行
+        # Filter out placeholder rows with t<0
         df_m_t = df_m[df_m["t"] >= 0].copy()
 
-        # 组装回你原先的 all_t_records_* 列表结构，以复用后续代码
+        # Assemble all_t_records_* list structure to reuse subsequent code
         all_t_records = [
             (int(row.t),
              bool(row.is_covered),
@@ -208,7 +214,7 @@ def main():
             for _, row in df_m_t.iterrows()
         ]
 
-        # 统计每个 t 的 selection conditional 指标
+        # Compute selection conditional metrics for each t
         t_to_cov = {}
         t_to_cov_count = {}
         t_to_len = {}
@@ -258,7 +264,7 @@ def main():
             summary_randomize.append((n_online, t_vals, t_covs, t_lens, t_inf_fracs, t_cals, avg_sel))
             all_t_records_randomize = all_t_records
 
-    # ----- 以下：完全复用你原有的打印表格与画图 -----
+    # Print and plot (reusing original logic)
     print("\nPer-t selection conditional statistics (mean/std across simulations):")
     header = ("Method", "t", "Count", "CovMean", "CovStd", "LenMedian", "LenStd", "InfFracMean", "InfFracStd", "CalMean", "CalStd")
     header_str = "{:>10} | {:>4} | {:>6} | {:>7} | {:>7} | {:>7} | {:>7} | {:>11} | {:>11} | {:>8} | {:>8}".format(*header)
@@ -300,7 +306,7 @@ def main():
 
     print(f"\nResults saved to: {txt_path}")
 
-    # 绘图（与你原代码一致）
+    # Plot (consistent with original code)
     plot_filename = os.path.join(results_dir, f"plot_{timestamp}.png")
     fig, axes = plt.subplots(2, 2, figsize=(15, 8))
     metrics = [

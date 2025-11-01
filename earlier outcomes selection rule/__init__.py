@@ -2,4 +2,4 @@
 from data import generate_data
 from selection import selection_rule
 from interval import construct_prediction_interval
-from experiment import run_randomized_quantile_interval_experiment, main
+from parallel_experiment import run_randomized_quantile_interval_experiment, main

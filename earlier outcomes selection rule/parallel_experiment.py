@@ -1,12 +1,9 @@
-# File: decision_permutation/experiment.py
-# ===== 放在最顶部，且在 import numpy 之前，避免线程竞争 =====
 import os
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
-# ===== 正式导入 =====
 import numpy as np
 import random
 from typing import Tuple, List
@@ -14,7 +11,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 import csv
 
-from config import M, alpha, method, q
+from config import M, alpha, method, q, reference_set_method
 from data import generate_data
 from selection import selection_rule_earlier_outcomes
 from interval import construct_prediction_interval
@@ -24,7 +21,7 @@ import matplotlib.pyplot as plt
 def is_covered(y: float, interval: List[Tuple[float, float]]) -> bool:
     for interval_tuple in interval:
         lower, upper = interval_tuple
-        if lower <= y <=upper:
+        if lower <= y <= upper:
             return True
     return False
 
@@ -35,23 +32,29 @@ def run_randomized_quantile_interval_experiment(
     M: int = M,
     alpha: float = alpha,
     quantile_method: str = "upper",
+    reference_set_method: str = reference_set_method,
     seed: int = 0
 ) -> Tuple[List[Tuple[int, bool, float, bool, float]], int]:
     """
-    返回：
+    Returns:
       - t_records: List[(t, is_covered, length, is_inf, cal_size)]
-      - selected: 该 run 被选中的 t 的个数
+      - selected: Number of t's selected by this run
     """
-    X_on, Y_on, mu_on = generate_data(n_online, seed)
-    X_off, Y_off, mu_off = generate_data(n_offline, seed)
-    t_records = []  # (t, is_covered, length, is_inf, cal_size)
+    # X_on, Y_on, mu_on = generate_data(n_online, seed)
+    # X_off, Y_off, mu_off = generate_data(n_offline, seed)
+    Y_all, mu_all = generate_data(n_online+n_offline, seed)
+    Y_on = Y_all[:n_online]
+    mu_on = mu_all[:n_online]
+    Y_off = Y_all[n_online:]
+    mu_off = mu_all[n_online:]
+    t_records = []  
     selected = 0
     for t in range(n_online):
         sel = selection_rule_earlier_outcomes(mu_on[t], Y_on[:t].tolist(),method=method,q=q)
         if not sel:
             continue
         selected += 1
-        interval, cal_size = construct_prediction_interval(t, X_on, Y_on, mu_on, X_off, Y_off, mu_off, M, alpha, quantile_method=quantile_method,q=q,method=method)
+        interval, cal_size = construct_prediction_interval(t, Y_on, mu_on, Y_off, mu_off, M, alpha, quantile_method=quantile_method,q=q,method=method,reference_set_method=reference_set_method)
         iscov = is_covered(Y_on[t], interval)
         #计算length
         length = 0
@@ -62,14 +65,12 @@ def run_randomized_quantile_interval_experiment(
         t_records.append((t, iscov, length, is_inf, cal_size))
     return t_records, selected
 
-
-# ---------------- 并行 worker：跑单个 seed 的一次实验 ----------------
-def _worker_one_run(run_id: int, n_online: int, n_offline: int, quantile_method: str, base_seed: int):
+# Parallel worker: run single experiment for one seed
+def _worker_one_run(run_id: int, n_online: int, n_offline: int, quantile_method: str, reference_set_method: str, base_seed: int):
     """
-    返回 (run_id, selected, t_records)
-    t_records: List[(t, iscov, length, is_inf, cal_size)]
+    Returns (run_id, selected, t_records)
+    t_records: List[(t, is_covered, length, is_inf, cal_size)]
     """
-    # 与你原代码一致的 RNG 设定（可复现）
     np.random.seed(base_seed + 2)
     random.seed(base_seed + 2)
 
@@ -77,6 +78,7 @@ def _worker_one_run(run_id: int, n_online: int, n_offline: int, quantile_method:
         n_offline=n_offline,
         n_online=n_online,
         quantile_method=quantile_method,
+        reference_set_method=reference_set_method,
         seed=base_seed
     )
     return run_id, selected, t_records
@@ -86,24 +88,23 @@ def main():
     import datetime
     import pandas as pd
 
-    # 要测试的不同行数列表（保持一致）
-    n_online_list = [50]
-    n_offline = 50
-    # Monte Carlo 次数
-    n_runs = 100
+    n_online_list = [100]
+    n_offline = 0
+    # Number of runs
+    n_runs = 10000
 
-    # 生成带时间戳的文件名
+    # Generate timestamped filenames
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     results_dir = os.path.join(script_dir, "experiment_results")
     os.makedirs(results_dir, exist_ok=True)
 
-    # 汇总 TXT（保留）
+    # Summary TXT 
     filename = os.path.join(results_dir, f"results_{timestamp}.txt")
-    # 原始记录 CSV（新增）
+    # Raw records CSV
     csv_path = os.path.join(results_dir, f"records_{timestamp}.csv")
 
-    # 写入实验参数到 TXT
+    # Write experiment parameters to TXT
     with open(filename, 'w') as f:
         f.write(f"Experiment Results - {timestamp}\n")
         f.write("="*50 + "\n")
@@ -114,7 +115,7 @@ def main():
         f.write(f"M: {M}\n")
         f.write("="*50 + "\n\n")
 
-    # 初始化 CSV 表头
+    # Initialize CSV header
     with open(csv_path, "w", newline="") as fcsv:
         writer = csv.writer(fcsv)
         writer.writerow([
@@ -123,10 +124,11 @@ def main():
             "selected_total"
         ])
 
-    # 并行进程数：M2 建议先 6（避免过度并行 + BLAS 多线程）
+
+    # Number of parallel workers
     max_workers = min(6, os.cpu_count() or 4)
 
-    # 外层总体进度条：方法×n_online 组合
+    # Outer progress bar: method×n_online groups
     total_groups = len(["upper", "randomize"]) * len(n_online_list)
     group_bar = tqdm(total=total_groups, desc="All groups", position=0)
 
@@ -134,57 +136,64 @@ def main():
         print(f"\nRunning experiments for {quantile_method} quantile method...")
 
         for n_online in n_online_list:
-            futures = []
-            with ProcessPoolExecutor(max_workers=max_workers) as ex:
-                for run_id in range(n_runs):
-                    futures.append(ex.submit(
-                        _worker_one_run,
-                        run_id=run_id,
-                        n_online=n_online,
-                        n_offline=n_offline,
-                        quantile_method=quantile_method,
-                        base_seed=run_id
-                    ))
+            # ========= Only here is the change of "batch submission of futures", other changes are not made =========
+            run_ids = list(range(n_runs))
+            batch_size = 500  # Can be adjusted as needed; only affects submission method, does not affect results
 
-                # 该组的进度条（内层）
-                with open(csv_path, "a", newline="") as fcsv:
-                    writer = csv.writer(fcsv)
-                    inner_bar = tqdm(
-                        total=len(futures),
-                        desc=f"{quantile_method} | T={n_online}",
-                        position=1,
-                        leave=False
-                    )
-                    for fut in as_completed(futures):
-                        run_id, selected, t_records = fut.result()
-                        if len(t_records) == 0:
-                            # 没有被选中的 t，也写一行占位（便于统计 selected_total）
-                            writer.writerow([
-                                quantile_method, n_online, run_id, -1,
-                                "", "", "", "",
-                                selected
-                            ])
-                        else:
-                            for (t, iscov, length, is_inf, cal_size) in t_records:
+            with ProcessPoolExecutor(max_workers=max_workers) as ex:
+                for bstart in range(0, n_runs, batch_size):
+                    batch = run_ids[bstart:bstart + batch_size]
+                    futures = []
+                    for run_id in batch:
+                        futures.append(ex.submit(
+                            _worker_one_run,
+                            run_id=run_id,
+                            n_online=n_online,
+                            n_offline=n_offline,
+                            quantile_method=quantile_method,
+                            reference_set_method=reference_set_method,
+                            base_seed=run_id
+                        ))
+
+                    # Progress bar for this group (inner, by batch)
+                    with open(csv_path, "a", newline="") as fcsv:
+                        writer = csv.writer(fcsv)
+                        inner_bar = tqdm(
+                            total=len(futures),
+                            desc=f"{quantile_method} | T={n_online} | batch {bstart//batch_size + 1}",
+                            position=1,
+                            leave=False
+                        )
+                        for fut in as_completed(futures):
+                            run_id, selected, t_records = fut.result()
+                            if len(t_records) == 0:
+                                # No t selected, write a placeholder row (for selected_total statistics)
                                 writer.writerow([
-                                    quantile_method, n_online, run_id, t,
-                                    int(iscov),
-                                    length,
-                                    int(is_inf),
-                                    float(cal_size),
+                                    quantile_method, n_online, run_id, -1,
+                                    "", "", "", "",
                                     selected
                                 ])
-                        inner_bar.update(1)
-                    inner_bar.close()
+                            else:
+                                for (t, iscov, length, is_inf, cal_size) in t_records:
+                                    writer.writerow([
+                                        quantile_method, n_online, run_id, t,
+                                        int(iscov),
+                                        length,
+                                        int(is_inf),
+                                        float(cal_size),
+                                        selected
+                                    ])
+                            inner_bar.update(1)
+                        inner_bar.close()
+            # ========= Batch changes end =========
             group_bar.update(1)
 
     group_bar.close()
     print(f"\nRaw per-t records saved to CSV: {csv_path}")
 
-    # ---------------- 从 CSV 读回并复用你原有的统计与画图逻辑 ----------------
+    # ---------------- Read from CSV ----------------
     df = pd.read_csv(csv_path)
 
-    # 保持与原来一致：只输出第一个 n_online 的详细表格/曲线
     n_online = n_online_list[0]
 
     summary_upper = []
@@ -195,7 +204,7 @@ def main():
     for mth in ["upper", "randomize"]:
         df_m = df[(df["method"] == mth) & (df["n_online"] == n_online)]
 
-        # selected_counts：按 run_id 取 selected_total 的首个值
+        # selected_counts: take the first value of selected_total by run_id
         sel_by_run = (
             df_m[["run_id", "selected_total"]]
             .drop_duplicates(subset=["run_id"])
@@ -204,10 +213,10 @@ def main():
         )
         selected_counts = sel_by_run.to_list()
 
-        # 过滤掉 t<0 的占位行
+        # Filter out placeholder rows for t<0
         df_m_t = df_m[df_m["t"] >= 0].copy()
 
-        # 组装回 all_t_records_* 结构
+        # Assemble back into all_t_records_* structure
         all_t_records = [
             (int(row.t),
              bool(row.is_covered),
@@ -217,7 +226,7 @@ def main():
             for _, row in df_m_t.iterrows()
         ]
 
-        # 统计每个 t 的 selection conditional 指标（与你原版一致）
+        # Statistics for each t's selection conditional metrics
         t_to_cov = {}
         t_to_cov_count = {}
         t_to_len = {}
@@ -267,7 +276,7 @@ def main():
             summary_randomize.append((n_online, t_vals, t_covs, t_lens, t_inf_fracs, t_cals, avg_sel))
             all_t_records_randomize = all_t_records
 
-    # ----- 以下打印与画图：保持一致 -----
+    # ----- The following prints and plots -----
     print("\nPer-t selection conditional statistics (mean/std across simulations):")
     header = ("Method", "t", "Count", "CovMean", "CovStd", "LenMedian", "LenStd", "InfFracMean", "InfFracStd", "CalMean", "CalStd")
     header_str = "{:>10} | {:>4} | {:>6} | {:>7} | {:>7} | {:>7} | {:>7} | {:>11} | {:>11} | {:>8} | {:>8}".format(*header)
@@ -309,7 +318,7 @@ def main():
 
     print(f"\nResults saved to: {filename}")
 
-    # 绘制四子图
+    # Plot four subplots
     plot_filename = os.path.join(results_dir, f"plot_{timestamp}.png")
     fig, axes = plt.subplots(2, 2, figsize=(15, 8))
     metrics = [
@@ -370,4 +379,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()

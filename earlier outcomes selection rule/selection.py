@@ -33,7 +33,7 @@ def selection_rule_earlier_outcomes(
         values = np.array(y_history)
         n = len(values)
         distances = np.arange(n, 0, -1)
-        # 越靠近测试点权重越大，raw_weights是指数衰减的
+        # The closer to the test point, the greater the weight, raw_weights is exponentially decaying
         raw_weights = 0.5 ** distances
         weights = raw_weights / raw_weights.sum()
 
