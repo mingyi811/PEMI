@@ -1,37 +1,51 @@
 # PEMI
 
-This repository contains the code to reproduce the results in the paper
+This repository contains the code to reproduce the results in the paper.
 
 ## Files
 - `application/`: Real-data applications on drug discovery.
-    - `application/covariate-dependent selection rule/`: Drug discovery with covariate-dependent selection rules.
-      - `application/covariate-dependent selection rule/decision-driven selection rule/`: Drug discovery with decision-driven selection rules.
-      - `application/covariate-dependent selection rule/weighted quantile or average/`: Drug discovery with selection rules based on weighted quantile or average.
-      - `application/covariate-dependent selection rule/online optimization selection rule/`: Drug discovery with selection rules based on model uncertainty.
-    - `application/conformal p-value selection rule/`: Drug discovery with conformal selection including p-value and e-value.
-    - `application/earlier outcomes selection rule/`: Drug discovery with selection rules based on earlier outcomes.
+    - `application/cov_dep/`: Covariate-dependent selection.
+      - `application/cov_dep/dec/`: Decision-driven selection.
+      - `application/cov_dep/wq_wa/`: Selection based on weighted quantile or average.
+      - `application/cov_dep/opt/`: Selection based on model uncertainty.
+    - `application/conf_sel/`: Conformal selection.
+    - `application/earlier_out/`: Selection based on earlier outcomes.
 - `simulation/`: Simulation experiments on various settings.
 - `data/`: Drug discovery datasets used in application experiments.
-- `requirements.txt`: A list of Python packages of my environment(including some unnecessary packages).
+- `requirements.txt`: A list of Python packages of my environment.
 
 ## 1. Application
 
-For application experiments, I have organized a folder for each selection rule to facilitate reproducibility.
-Each folder contains the following files:
+The application experiments are organized into separate folders, each corresponding to a particular selection rule.  
+Within each folder, the following files are provided:
 
-- `config.py`: Defines various hyperparameters used in the experiments.  
-- `data.py`: Loads and preprocesses the dataset.  
-- `interval.py`: Constructs the prediction sets.  
-- `parallel_experiment.py`: Runs the entire experimental pipeline — including executing experiments, recording results, and generating preliminary plots. One can directly run this file to reproduce the experiments.  
-- `selection.py`: Implements the selection rules used in the experiments.
+- `config.py` — Defines hyperparameters and experimental settings.  
+- `data.py` — Loads and preprocesses the drug discovery dataset.  
+- `interval.py`** — Constructs the prediction sets used in the experiments.  
+- `parallel_experiment.py` — Runs the full experimental pipeline, including executing experiments, recording results, and generating preliminary plots.  
+- `selection.py` — Implements the selection rules associated with the corresponding folder.
+
+To reproduce our results, users may set hyperparameters directly in `config.py` and then run:
+
+```
+python parallel_experiment.py
+```
 
 ## 2. Simulation
 
-In the simulation part, we only varied the experimental settings to demonstrate the performance of our method under different scenarios. Therefore, there is no essential change in the code structure.
+The simulation code follow the same structure as the application code. 
 
-The file structure for simulation experiments is identical to that of the `weighted quantile or average` selection rule in the application section.  The only differences are that the data-generating process has been modified to accommodate two synthetic data settings, and an additional option for the CQR score function has been incorporated into `interval.py`.  
+The main differences from the application setting are:
 
-One can adjust the settings and code in each file to fully reproduce our simulation experiments.
+- the **data-generating process** in `data.py` has been replaced with two synthetic models;  
+- `interval.py` includes an additional option for the **CQR score function**.
+
+To reproduce any simulation experiment, one can adjust the settings and code in each file, and run:
+
+```
+python parallel_experiment.py
+```
+
 
 
 
