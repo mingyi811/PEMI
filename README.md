@@ -21,7 +21,7 @@ Within each folder, the following files are provided:
 
 - `config.py` — Defines hyperparameters and experimental settings.  
 - `data.py` — Loads and preprocesses the drug discovery dataset.  
-- `interval.py`** — Constructs the prediction sets used in the experiments.  
+- `interval.py` — Constructs the prediction sets used in the experiments.  
 - `parallel_experiment.py` — Runs the full experimental pipeline, including executing experiments, recording results, and generating preliminary plots.  
 - `selection.py` — Implements the selection rules associated with the corresponding folder.
 
