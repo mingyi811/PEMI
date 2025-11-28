@@ -1,6 +1,7 @@
 # PEMI
 
-This repository contains the code to reproduce the results in the paper.
+This repository contains the code to reproduce the results in the paper [Online Selective Conformal Prediction with Asymmetric Rules:
+A Permutation Test Approach](https://ying531.github.io/assets/files/PEMI_paper.pdf).
 
 ## Files
 - `application/`: Real-data applications on drug discovery.
